@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from "react";
 import "./App.css";
 import "@aws-amplify/ui-react/styles.css";
-import { API } from "aws-amplify";
+import { API, Storage } from "aws-amplify";
 import {
   Button,
   Flex,
   Heading,
+  Image,
   Text,
   TextField,
   View,
@@ -24,9 +25,19 @@ const App = ({ signOut }) => {
     fetchNotes();
   }, []);
   // uses the API class to send a query to the GraphQL API and retrieve a list of notes
+  // along with an associated image
   async function fetchNotes() {
     const apiData = await API.graphql({ query: listNotes });
     const notesFromAPI = apiData.data.listNotes.items;
+    await Promise.all(
+      notesFromAPI.map(async (note) => {
+        if (note.image) {
+          const url = await Storage.get(note.name);
+          note.image = url;
+        }
+        return note;
+      })
+    );
     setNotes(notesFromAPI);
   }
   /*
@@ -42,10 +53,14 @@ const App = ({ signOut }) => {
       or XMLHttpRequest.send() method.
     */
     const form = new FormData(event.target);
+    const image = form.get("image");
     const data = {
       name: form.get("name"),
       description: form.get("description"),
+      image: image.name,
     };
+    // add the image to the local image array if an image is associated with the note
+    if (!!data.image) await Storage.put(data.name, image);
     // create a new note with the form input data
     await API.graphql({
       query: createNoteMutation,
@@ -56,9 +71,10 @@ const App = ({ signOut }) => {
   }
   // Like createNote, this function is sending a GraphQL mutation along with some variables, 
   // but instead of creating a note, we are deleting a note.
-  async function deleteNote({ id }) {
+  async function deleteNote({ id, name }) {
     const newNotes = notes.filter((note) => note.id !== id);
     setNotes(newNotes);
+    await Storage.remove(name); // remove the note's image from storage
     await API.graphql({
       query: deleteNoteMutation,
       variables: { input: { id } },
@@ -91,6 +107,12 @@ const App = ({ signOut }) => {
             variation="quiet"
             required
           />
+          <View
+            name="image"
+            as="input"
+            type="file"
+            style={{ alignSelf: "end" }}
+          />
           <Button type="submit" variation="primary">
             Create Note
           </Button>
@@ -109,6 +131,13 @@ const App = ({ signOut }) => {
               {note.name}
             </Text>
             <Text as="span">{note.description}</Text>
+            {note.image && (
+              <Image
+                src={note.image}
+                alt={`visual aid for ${notes.name}`}
+                style={{ width: 400 }}
+              />
+            )}
             <Text>Created on: {parseDate(note.createdAt)}</Text>
             <Button variation="link" onClick={() => deleteNote(note)}>
               Delete note
